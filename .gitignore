@@ -17,7 +17,6 @@ venv/
 ENV/
 env/
 .env
-.env.*
 .python-version
 
 # Logs
