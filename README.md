@@ -86,9 +86,9 @@
 
  ```bash
  # Whisper worker
- python worker/whisper_worker.py
+ python -m worker.whisper_worker
  # NLLB worker
- python worker/nllb_worker.py
+ python -m worker.nllb_worker
  ```
 
  - API server (development):
