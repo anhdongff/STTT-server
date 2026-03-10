@@ -14,6 +14,8 @@ if str(ROOT) not in sys.path:
 
 from cache_service.redis_client import blpop, rpush
 from data_service.db import PostgresDB
+from data_service.sqlite_db import SqliteDB
+from api_service.enum import JobStatus, SqliteTableName, PostgresTableName
 
 LOG = logging.getLogger("nllb_worker")
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +30,8 @@ WAIT_FOR_JOB_DONE = os.getenv("WAIT_FOR_JOB_DONE", "true").lower() in ("1", "tru
 NLLB_MODEL = os.getenv("NLLB_MODEL", "facebook/nllb-200-distilled-600M")
 NLLB_NUM_BEAMS = int(os.getenv("NLLB_NUM_BEAMS", "2"))
 HF_TOKEN = os.getenv("HF_TOKEN")
+
+USE_SQLITE = os.getenv("USE_SQLITE", "false") == "true"
 
 
 def load_languages():
@@ -153,26 +157,40 @@ class NLLBWorker:
     def run(self):
         LOG.info("NLLB worker started; waiting on %s (BLPOP timeout=0)", REDIS_NLLB_QUEUE)
         while True:
-            item = blpop(REDIS_NLLB_QUEUE, timeout=0)
-            if not item:
-                time.sleep(0.1)
-                continue
-            try:
-                _, raw = item
-                if isinstance(raw, bytes):
-                    raw = raw.decode('utf-8')
-                job = json.loads(raw)
-            except Exception as exc:
-                LOG.exception('Invalid job payload: %s', exc)
-                continue
+            if not USE_SQLITE:
+                item = blpop(REDIS_NLLB_QUEUE, timeout=0)
+                if not item:
+                    time.sleep(0.1)
+                    continue
+                try:
+                    _, raw = item
+                    if isinstance(raw, bytes):
+                        raw = raw.decode('utf-8')
+                    job = json.loads(raw)
+                except Exception as exc:
+                    LOG.exception('Invalid job payload: %s', exc)
+                    continue
 
-            try:
-                self.process_job(job)
-            except Exception:
-                LOG.exception('Error processing nllb job %s', job.get('id'))
+                try:
+                    self.process_job(job)
+                except Exception:
+                    LOG.exception('Error processing nllb job %s', job.get('id'))
+            else:
+                with SqliteDB.from_env() as db:
+                    row = db.fetchone(f"SELECT * FROM {SqliteTableName.NLLB_QUEUE.value} WHERE status = %s ORDER BY id LIMIT 1", (JobStatus.PENDING.value,))
+                    if row:
+                        job = dict(row)
+                        # mark as in_progress before processing to avoid multiple workers picking the same job
+                        db.execute(f"UPDATE {SqliteTableName.NLLB_QUEUE.value} SET status = %s WHERE id = %s", (JobStatus.RUNNING.value, job['id']))
+                        try:
+                            self.process_job(job)
+                        except Exception:
+                            LOG.exception('Error processing nllb job %s', job.get('id'))
+                    else:
+                        time.sleep(0.1)  # no pending jobs, wait before polling again
 
     def process_job(self, job: dict):
-        child_id = job.get('id')
+        child_id = job.get('job_child_id')
         input_path = Path(job.get('input_file_path'))
         output_type = job.get('output_type')
         transcribe_file = Path(job.get('transcribe_file_path'))
@@ -198,11 +216,11 @@ class NLLBWorker:
             LOG.warning('No segments found in %s', input_path)
             # still mark completed to avoid infinite loops
             try:
-                with PostgresDB.from_env() as db:
-                    db.execute('UPDATE sttt.job_children SET status = %s WHERE id = %s', ('completed', child_id))
+                with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+                    db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s WHERE id = %s", (JobStatus.COMPLETED.value, child_id))
             except Exception:
                 LOG.exception('Failed to mark job_children completed for id=%s', child_id)
-            if WAIT_FOR_JOB_DONE:
+            if WAIT_FOR_JOB_DONE and not USE_SQLITE:
                 rpush(REDIS_JOB_DONE, json.dumps({'id': child_id}))
             return
 
@@ -212,8 +230,8 @@ class NLLBWorker:
         except Exception:
             LOG.exception('Translation failed for child %s', child_id)
             try:
-                with PostgresDB.from_env() as db:
-                    db.execute('UPDATE sttt.job_children SET status = %s WHERE id = %s', ('error', child_id))
+                with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+                    db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s WHERE id = %s", (JobStatus.ERROR.value, child_id))
             except Exception:
                 LOG.exception('Failed to mark job_children error for id=%s', child_id)
             return
@@ -251,12 +269,12 @@ class NLLBWorker:
 
         # mark completed
         try:
-            with PostgresDB.from_env() as db:
-                db.execute('UPDATE sttt.job_children SET status = %s WHERE id = %s', ('completed', child_id))
+            with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+                db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s WHERE id = %s", (JobStatus.COMPLETED.value, child_id))
         except Exception:
             LOG.exception('Failed to update job_children status to completed for id=%s', child_id)
 
-        if WAIT_FOR_JOB_DONE:
+        if WAIT_FOR_JOB_DONE and not USE_SQLITE:
             rpush(REDIS_JOB_DONE, json.dumps({'id': child_id}))
 
     def _format_srt_time(self, seconds: float) -> str:

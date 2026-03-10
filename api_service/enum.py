@@ -3,9 +3,9 @@ from enum import Enum
 
 class JobStatus(str, Enum):
     PENDING = "pending"
-    IN_PROGRESS = "in_progress"
+    RUNNING = "running"
     COMPLETED = "completed"
-    FAILED = "failed"
+    ERROR = "error"
 
 
 class JobType(str, Enum):
@@ -16,3 +16,15 @@ class JobType(str, Enum):
 class OutputType(str, Enum):
     TEXT = "text"
     SRT = "srt"
+
+class PostgresTableName(str, Enum):
+    USERS = "sttt.users"
+    JOBS = "sttt.jobs"
+    CHILDREN_JOBS = "sttt.job_children"
+
+class SqliteTableName(str, Enum):
+    USERS = "users"
+    JOBS = "jobs"
+    CHILDREN_JOBS = "job_children"
+    WHISPER_QUEUE = "whisper_queue"
+    NLLB_QUEUE = "nllb_queue"

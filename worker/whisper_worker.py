@@ -15,6 +15,8 @@ if str(ROOT) not in sys.path:
 
 from cache_service.redis_client import blpop, rpush
 from data_service.db import PostgresDB
+from data_service.sqlite_db import SqliteDB
+from api_service.enum import PostgresTableName, SqliteTableName, JobStatus, JobType, OutputType
 
 # optional model import
 try:
@@ -39,6 +41,7 @@ WAIT_FOR_JOB_DONE = os.getenv("WAIT_FOR_JOB_DONE", "true").lower() in ("1", "tru
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "Systran/faster-whisper-medium")
 WHISPER_COMPUTE = os.getenv("WHISPER_COMPUTE_TYPE", None)
 WHISPER_BEAM = int(os.getenv("WHISPER_BEAM_SIZE", "6"))
+USE_SQLITE = os.getenv("USE_SQLITE", "false") == "true"
 
 SEGMENT_SECONDS = 60
 
@@ -90,26 +93,42 @@ class WhisperWorker:
     def run(self):
         LOG.info("Worker started. WAIT_FOR_JOB_DONE=%s", WAIT_FOR_JOB_DONE)
         while True:
-            item = blpop(REDIS_WHISPER_QUEUE, timeout=0)
-            # item is (key, value)
-            try:
-                if not item:
+            if not USE_SQLITE:
+                item = blpop(REDIS_WHISPER_QUEUE, timeout=0)
+                # item is (key, value)
+                try:
+                    if not item:
+                        continue
+                    _, raw = item
+                    if isinstance(raw, bytes):
+                        raw = raw.decode('utf-8')
+                    job = json.loads(raw)
+                except Exception as exc:
+                    LOG.exception("Invalid job payload: %s", exc)
                     continue
-                _, raw = item
-                if isinstance(raw, bytes):
-                    raw = raw.decode('utf-8')
-                job = json.loads(raw)
-            except Exception as exc:
-                LOG.exception("Invalid job payload: %s", exc)
-                continue
 
-            try:
-                self.process_job(job)
-            except Exception:
-                LOG.exception("Error processing job %s", job.get('id'))
+                try:
+                    self.process_job(job)
+                except Exception:
+                    LOG.exception("Error processing job %s", job.get('id'))
+            else:
+                # SQLite mode: poll DB for pending jobs
+                try:
+                    with SqliteDB.from_env() as db:
+                        row = db.fetchone(f"SELECT * FROM {SqliteTableName.WHISPER_QUEUE.value} WHERE status = %s ORDER BY id LIMIT 1", (JobStatus.PENDING.value,))
+                        if row:
+                            job = dict(row)
+                            # mark as running before processing to avoid multiple workers picking the same job
+                            db.execute(f"UPDATE {SqliteTableName.WHISPER_QUEUE.value} SET status = %s WHERE id = %s", (JobStatus.RUNNING.value, job['id']))
+                            self.process_job(job)
+                        else:
+                            time.sleep(0.1)  # no pending jobs, wait before polling again
+                except Exception:
+                    LOG.exception("Error polling for jobs")
+                    time.sleep(5)
 
     def process_job(self, job: dict):
-        child_id = job.get('id')
+        child_id = job.get('job_child_id')
         input_file = Path(job.get('input_file_path'))
         offset = int(job.get('offset', 0))
         input_lang_key = job.get('input_language')
@@ -123,8 +142,8 @@ class WhisperWorker:
 
         # set status running
         try:
-            with PostgresDB.from_env() as db:
-                db.execute("UPDATE sttt.job_children SET status = %s WHERE id = %s", ('running', child_id))
+            with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+                db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s WHERE id = %s", (JobStatus.RUNNING.value, child_id))
         except Exception:
             LOG.exception("Failed to update job_children status to running for id=%s", child_id)
 
@@ -140,8 +159,8 @@ class WhisperWorker:
         except Exception:
             LOG.exception("Model error for file %s", input_file)
             # mark failed
-            with PostgresDB.from_env() as db:
-                db.execute("UPDATE sttt.job_children SET status = %s WHERE id = %s", ('error', child_id))
+            with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+                db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s WHERE id = %s", (JobStatus.ERROR.value, child_id))
             return
 
         seg_list = list(segments)
@@ -180,11 +199,16 @@ class WhisperWorker:
                     fh.write(self._format_srt_time(start) + " --> " + self._format_srt_time(end) + "\n")
                     fh.write(text.strip() + "\n\n")
                     idx += 1
+        
+        # mark completed job on whisper queue (only when use Sqlite, for Redis the worker is effectively stateless and job completion is signaled by pushing to job_done queue)
+        if USE_SQLITE:
+             with SqliteDB.from_env() as db:
+                db.execute(f"UPDATE {SqliteTableName.WHISPER_QUEUE.value} SET status = %s WHERE id = %s", (JobStatus.COMPLETED.value, job['id']))
 
         # if job_type is transcribe -> mark completed
         if job_type == 'transcribe':
-            with PostgresDB.from_env() as db:
-                db.execute("UPDATE sttt.job_children SET status = %s WHERE id = %s", ('completed', child_id))
+            with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+                db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s WHERE id = %s", (JobStatus.COMPLETED.value, child_id))
             LOG.info("Child %s marked completed (transcribe)", child_id)
             return
 
@@ -217,26 +241,36 @@ class WhisperWorker:
         # push to nllb_queue with input_file_path changed to temp_path
         job2 = dict(job)
         job2['input_file_path'] = str(temp_path.resolve())
-        rpush(REDIS_NLLB_QUEUE, json.dumps(job2))
+        if not USE_SQLITE: rpush(REDIS_NLLB_QUEUE, json.dumps(job2))
+        else: 
+            with SqliteDB.from_env() as db:
+                db.execute(f"INSERT INTO {SqliteTableName.NLLB_QUEUE.value} (job_child_id, input_file_path, offset, input_language, output_language, type, output_type, transcribe_file_path, translate_file_path, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", (child_id, str(temp_path.resolve()), offset, input_lang_key, output_lang_key, job_type, output_type, str(transcribe_path.resolve()), str(translate_path.resolve()), JobStatus.PENDING.value))
 
         # optionally wait for job_done
         if WAIT_FOR_JOB_DONE:
             LOG.info("Waiting for job done for child %s", child_id)
             while True:
-                res = blpop(REDIS_JOB_DONE, timeout=0)
-                if not res:
-                    continue
-                try:
-                    _, raw = res
-                    if isinstance(raw, bytes):
-                        raw = raw.decode('utf-8')
-                    msg = json.loads(raw)
-                except Exception:
-                    continue
-                # expect msg contains child_id and status
-                if msg.get('id') == child_id:
-                    LOG.info("Received job done for %s: %s", child_id, msg)
-                    break
+                if not USE_SQLITE:
+                    item = blpop(REDIS_JOB_DONE, timeout=30)
+                    if item:
+                        _, raw = item
+                        if isinstance(raw, bytes):
+                            raw = raw.decode('utf-8')
+                        done_job = json.loads(raw)
+                        if done_job.get('child_id') == child_id:
+                            LOG.info("Received job done for child %s", child_id)
+                            break
+                else:
+                    # SQLite mode: poll DB for job completion
+                    try:
+                        with SqliteDB.from_env() as db:
+                            row = db.fetchone(f"SELECT * FROM {SqliteTableName.CHILDREN_JOBS.value} WHERE id = %s AND status = %s", (child_id, JobStatus.COMPLETED.value))
+                            if row:
+                                LOG.info("Received job done for child %s", child_id)
+                                break
+                    except Exception:
+                        LOG.exception("Error polling for job completion")
+                        time.sleep(0.1)
 
     def _format_srt_time(self, seconds: float) -> str:
         ms = int((seconds - int(seconds)) * 1000)

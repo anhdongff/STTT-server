@@ -42,6 +42,10 @@ htmlcov/
 
 # Database files
 *.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.db
+*.sqlite3-shm
 
 # Uploads and generated outputs
 upload/

@@ -10,6 +10,8 @@ from jose import JWTError
 
 from cache_service.redis_client import exists as cache_exists, incr as cache_incr, expire as cache_expire, set_key, delete as cache_delete
 from data_service.db import PostgresDB
+from data_service.sqlite_db import SqliteDB
+from api_service.enum import PostgresTableName, SqliteTableName
 
 import bcrypt
 
@@ -21,6 +23,8 @@ JWT_EXP_MINUTES = int(os.getenv("JWT_EXP_MINUTES", "60"))
 LOCK_THRESHOLD = int(os.getenv("LOGIN_LOCK_THRESHOLD", "5"))
 LOCK_WINDOW_SECONDS = int(os.getenv("LOGIN_LOCK_WINDOW_SECONDS", "900"))
 LOCK_DURATION_SECONDS = int(os.getenv("LOGIN_LOCK_DURATION_SECONDS", "900"))
+
+USE_SQLITE = os.getenv("USE_SQLITE", "false") == "true"
 
 # cache operations are handled by `cache_service.redis_client`
 
@@ -53,18 +57,20 @@ def decode_access_token(token: str) -> Optional[str]:
 
 
 def get_user_by_id(user_id: int):
-    with PostgresDB.from_env() as db:
-        row = db.fetchone("SELECT id, email, display_name, password_hash FROM sttt.users WHERE id = %s", (user_id,))
+    with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+        row = db.fetchone(f"SELECT id, email, display_name, password_hash FROM {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} WHERE id = %s", (user_id,))
         return row
 
 
 def get_user_by_email(email: str):
-    with PostgresDB.from_env() as db:
-        row = db.fetchone("SELECT id, email, display_name, password_hash FROM sttt.users WHERE email = %s", (email,))
+    with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+        row = db.fetchone(f"SELECT id, email, display_name, password_hash FROM {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} WHERE email = %s", (email,))
         return row
 
 
 def is_locked(email: str) -> bool:
+    if USE_SQLITE:
+        return False
     try:
         locked_key = f"login_locked:{email}"
         return cache_exists(locked_key)
@@ -75,6 +81,8 @@ def is_locked(email: str) -> bool:
 
 
 def register_failed_attempt(email: str) -> int:
+    if USE_SQLITE:
+        return 0
     try:
         fail_key = f"login_fail:{email}"
         # increment fail counter and set window expiry
@@ -93,6 +101,8 @@ def register_failed_attempt(email: str) -> int:
 
 
 def reset_failed_attempts(email: str) -> None:
+    if USE_SQLITE:
+        return
     try:
         cache_delete(f"login_fail:{email}")
         cache_delete(f"login_locked:{email}")

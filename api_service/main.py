@@ -9,6 +9,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from api_service import schemas
 from api_service import auth
+from api_service.enum import PostgresTableName, SqliteTableName
 from api_service.response_builder import ResponseBuilder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -17,8 +18,11 @@ import json
 import logging
 import traceback
 from data_service.db import PostgresDB
+from data_service.sqlite_db import SqliteDB
 
 app = FastAPI(title="STTT API Service")
+
+USE_SQLITE = os.getenv("USE_SQLITE", "false") == "true"
 
 security = HTTPBearer()
 # db = PostgresDB.from_env()  # create a global db instance for non-request operations (e.g. auth); request handlers will use context manager to get connections as needed
@@ -284,13 +288,13 @@ def submit_job(req: schemas.SubmitJobRequest, user=Depends(get_current_user)):
     translate_dir.mkdir(parents=True, exist_ok=True)
 
     # insert job and children in transaction
-    with PostgresDB.from_env().transaction() as db:
+    with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()).transaction() as db:
         # insert job
         trans_path = str((trans_dir / f"job_" ).resolve())  # placeholder; will finalize after insert
         trans_file = f"transcribe/job_output.{out_ext}"
         translate_file = f"translate/job_output.{out_ext}"
         q = (
-            "INSERT INTO sttt.jobs (user_id, status, total_children, completed_children, error_message, type, output_type, input_language, output_language, transcribe_file_path, translate_file_path, metadata) "
+            f"INSERT INTO {PostgresTableName.JOBS.value if not USE_SQLITE else SqliteTableName.JOBS.value} (user_id, status, total_children, completed_children, error_message, type, output_type, input_language, output_language, transcribe_file_path, translate_file_path, metadata) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
         )
         # Note: metadata column exists; pass empty json
@@ -314,28 +318,32 @@ def submit_job(req: schemas.SubmitJobRequest, user=Depends(get_current_user)):
         # now finalize file paths using job_id
         trans_path = str((trans_dir / f"{job_id}.{out_ext}").resolve())
         translate_path = str((translate_dir / f"{job_id}.{out_ext}").resolve())
-        db.execute("UPDATE sttt.jobs SET transcribe_file_path = %s, translate_file_path = %s WHERE id = %s", (trans_path, translate_path, job_id))
+        db.execute(f"UPDATE {PostgresTableName.JOBS.value if not USE_SQLITE else SqliteTableName.JOBS.value} SET transcribe_file_path = %s, translate_file_path = %s WHERE id = %s", (trans_path, translate_path, job_id))
 
         # insert children and enqueue messages
-        insert_q = "INSERT INTO sttt.job_children (job_id, input_file_path, status, metadata) VALUES (%s, %s, %s, %s) RETURNING id"
+        insert_q = f"INSERT INTO {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} (job_id, input_file_path, status, metadata) VALUES (%s, %s, %s, %s) RETURNING id"
         offset = 0
         for seg in segments:
             child_row = db.fetchone(insert_q, (job_id, str(seg.resolve()), 'pending', '{}'))
             child_id = child_row['id']
             # push to whisper_queue
-            payload = {
-                'id': child_id,
-                'input_file_path': str(seg.resolve()),
-                'offset': offset,
-                'input_language': req.input_language,
-                'output_language': req.output_language,
-                'type': job_type,
-                'output_type': output_type,
-                'transcribe_file_path': trans_path,
-                'translate_file_path': translate_path,
-            }
-            from cache_service.redis_client import rpush as cache_rpush
-            cache_rpush('whisper_queue', json.dumps(payload))
+            if not USE_SQLITE:
+                payload = {
+                    'job_child_id': child_id,
+                    'input_file_path': str(seg.resolve()),
+                    'offset': offset,
+                    'input_language': req.input_language,
+                    'output_language': req.output_language,
+                    'type': job_type,
+                    'output_type': output_type,
+                    'transcribe_file_path': trans_path,
+                    'translate_file_path': translate_path,
+                }
+                from cache_service.redis_client import rpush as cache_rpush
+                cache_rpush('whisper_queue', json.dumps(payload))
+            else:
+                insert_queue = f"INSERT INTO {SqliteTableName.WHISPER_QUEUE.value} (job_child_id, input_file_path, offset, input_language, output_language, type, output_type, transcribe_file_path, translate_file_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                db.execute(insert_queue, (child_id, str(seg.resolve()), offset, req.input_language, req.output_language, job_type, output_type, trans_path, translate_path))
             offset += 1
 
     content = ResponseBuilder.success({'job_id': job_id, 'total_children': total_children}, action=ResponseBuilder.ACTION.TOAST)
@@ -346,8 +354,8 @@ def submit_job(req: schemas.SubmitJobRequest, user=Depends(get_current_user)):
 def get_job(job_id: int, user=Depends(get_current_user)):
     # ensure job exists and belongs to requesting user
     try:
-        with PostgresDB.from_env() as db:
-            row = db.fetchone("SELECT * FROM sttt.jobs WHERE id = %s AND user_id = %s", (job_id, user["id"]))
+        with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+            row = db.fetchone(f"SELECT * FROM {PostgresTableName.JOBS.value if not USE_SQLITE else SqliteTableName.JOBS.value} WHERE id = %s AND user_id = %s", (job_id, user["id"]))
     except Exception:
         logger.exception('DB error while fetching job %s for user %s', job_id, user.get('id'))
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=ResponseBuilder.error("Internal server error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR))

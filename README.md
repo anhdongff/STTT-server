@@ -71,7 +71,7 @@
  - Nếu dùng GPU NVIDIA, cài PyTorch phù hợp với CUDA trước khi cài `transformers`/`accelerate` ví dụ: `pip install torch --index-url https://download.pytorch.org/whl/cu126`.
  - `ffmpeg` phải cài bằng package manager và có trên PATH.
 
- 4. Khởi động Postgres + Redis (khuyên dùng Docker Compose):
+ 4. Khởi động Postgres + Redis (chỉ khi USE_SQLITE=false):
 
  ```bash
  ./data_service/scripts/start.sh
@@ -94,7 +94,7 @@
  - API server (development):
 
  ```bash
- uvicorn api_service.main:app --host 0.0.0.0 --port 8000 --reload
+ uvicorn api_service.main:app --host 0.0.0.0 --port 8125 --reload
  ```
 
  Workers lắng nghe queue trên Redis (config trong `.env`).
