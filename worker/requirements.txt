@@ -1,0 +1,16 @@
+# Worker dependencies (transcription with faster-whisper + NLLB translation)
+psycopg2-binary>=2.9
+faster-whisper>=0.7.0
+# Optional / recommended for faster-whisper backend support
+ctranslate2>=3.24.0
+sentencepiece>=0.1.99
+
+# Translation (NLLB) dependencies
+transformers>=4.30.0
+huggingface-hub>=0.18.0
+accelerate>=0.30.0
+
+# Notes:
+# - ffmpeg must be installed on the host (system package), not via pip.
+# - To use GPU acceleration, install a CUDA-enabled torch build (follow PyTorch instructions).
+# - Provide HF_TOKEN in environment if model access requires authentication (see .env)

@@ -1,0 +1,63 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+pip-wheel-metadata/
+__pypackages__/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env
+.env.*
+.python-version
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+
+# Test cache
+.pytest_cache/
+htmlcov/
+
+# Coverage
+.coverage
+
+# Database files
+*.sqlite3
+
+# Uploads and generated outputs
+upload/
+transcribe/
+translate/
+temp/
+
+# Redis dump
+dump.rdb
+
+# Hugging Face / model caches
+transformers_cache/
+huggingface/
+
+# Notebook
+.ipynb_checkpoints/
+
+# Docker override (local)
+docker-compose.override.yml
