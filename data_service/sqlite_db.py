@@ -57,9 +57,9 @@ class SqliteDB:
             try:
                 self._conn.execute("PRAGMA foreign_keys = ON;")
                 self._conn.execute("PRAGMA journal_mode=WAL;")
-            except Exception:
-                # pragma may fail on older pysqlite builds; ignore
-                pass
+            except Exception as e:
+                print("Schema error:", e)
+                raise
 
     def close(self) -> None:
         if self._conn:

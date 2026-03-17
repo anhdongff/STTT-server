@@ -187,7 +187,7 @@ class NLLBWorker:
                         except Exception:
                             LOG.exception('Error processing nllb job %s', job.get('id'))
                     else:
-                        time.sleep(0.1)  # no pending jobs, wait before polling again
+                        time.sleep(0.05)  # no pending jobs, wait before polling again
 
     def process_job(self, job: dict):
         child_id = job.get('job_child_id')
@@ -217,7 +217,7 @@ class NLLBWorker:
             # still mark completed to avoid infinite loops
             try:
                 with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
-                    db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s WHERE id = %s", (JobStatus.COMPLETED.value, child_id))
+                    db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (JobStatus.COMPLETED.value, child_id))
             except Exception:
                 LOG.exception('Failed to mark job_children completed for id=%s', child_id)
             if WAIT_FOR_JOB_DONE and not USE_SQLITE:
@@ -270,7 +270,7 @@ class NLLBWorker:
         # mark completed
         try:
             with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
-                db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s WHERE id = %s", (JobStatus.COMPLETED.value, child_id))
+                db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (JobStatus.COMPLETED.value, child_id))
         except Exception:
             LOG.exception('Failed to update job_children status to completed for id=%s', child_id)
 

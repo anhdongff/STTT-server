@@ -56,6 +56,18 @@ def decode_access_token(token: str) -> Optional[str]:
         return None
 
 
+def get_current_user_by_jwt_token(token: str):
+    """Return user row (dict) for a valid JWT token, or None if token invalid or user not found."""
+    sub = decode_access_token(token)
+    if not sub:
+        return None
+    try:
+        user_id = int(sub)
+    except Exception:
+        return None
+    return get_user_by_id(user_id)
+
+
 def get_user_by_id(user_id: int):
     with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
         row = db.fetchone(f"SELECT id, email, display_name, password_hash FROM {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} WHERE id = %s", (user_id,))

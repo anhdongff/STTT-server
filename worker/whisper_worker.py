@@ -42,6 +42,7 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", "Systran/faster-whisper-medium")
 WHISPER_COMPUTE = os.getenv("WHISPER_COMPUTE_TYPE", None)
 WHISPER_BEAM = int(os.getenv("WHISPER_BEAM_SIZE", "6"))
 USE_SQLITE = os.getenv("USE_SQLITE", "false") == "true"
+SMALL_PER_LARGE_CHILD_JOB = int(os.getenv("SMALL_PER_LARGE_CHILD_JOB", "4"))
 
 SEGMENT_SECONDS = 60
 
@@ -57,6 +58,8 @@ class WhisperWorker:
     def __init__(self):
         self.languages = load_languages()
         self.model = None
+        # counter of small (whisper_queue) jobs processed since last large job
+        self.small_counter = 0
         if _FW_AVAILABLE:
             LOG.info("Loading faster-whisper model %s...", WHISPER_MODEL)
             try:
@@ -115,14 +118,49 @@ class WhisperWorker:
                 # SQLite mode: poll DB for pending jobs
                 try:
                     with SqliteDB.from_env() as db:
-                        row = db.fetchone(f"SELECT * FROM {SqliteTableName.WHISPER_QUEUE.value} WHERE status = %s ORDER BY id LIMIT 1", (JobStatus.PENDING.value,))
-                        if row:
-                            job = dict(row)
+                        job = None
+                        table = None
+                        isLargeJob = False
+                        # Decide whether to prefer a large job based on small_counter
+                        if self.small_counter >= SMALL_PER_LARGE_CHILD_JOB:
+                            # try to get a large whisper job first
+                            row = db.fetchone(f"SELECT * FROM {SqliteTableName.WHISPER_LARGE_QUEUE.value} WHERE status = %s ORDER BY id LIMIT 1", (JobStatus.PENDING.value,))
+                            if row:
+                                job = dict(row)
+                                table = SqliteTableName.WHISPER_LARGE_QUEUE.value
+                                isLargeJob = True
+                                # reset counter when we take a large job
+                                self.small_counter = 0
+                            else:
+                                # fallback to small queue if no large job available
+                                row = db.fetchone(f"SELECT * FROM {SqliteTableName.WHISPER_QUEUE.value} WHERE status = %s ORDER BY id LIMIT 1", (JobStatus.PENDING.value,))
+                                if row:
+                                    job = dict(row)
+                                    table = SqliteTableName.WHISPER_QUEUE.value
+                                    self.small_counter += 1
+                        else:
+                            # prefer small whisper jobs
+                            row = db.fetchone(f"SELECT * FROM {SqliteTableName.WHISPER_QUEUE.value} WHERE status = %s ORDER BY id LIMIT 1", (JobStatus.PENDING.value,))
+                            if row:
+                                job = dict(row)
+                                table = SqliteTableName.WHISPER_QUEUE.value
+                                self.small_counter += 1
+                            else:
+                                # if no small job, try a large one and reset counter if found
+                                row = db.fetchone(f"SELECT * FROM {SqliteTableName.WHISPER_LARGE_QUEUE.value} WHERE status = %s ORDER BY id LIMIT 1", (JobStatus.PENDING.value,))
+                                if row:
+                                    job = dict(row)
+                                    isLargeJob = True
+                                    table = SqliteTableName.WHISPER_LARGE_QUEUE.value
+                                    self.small_counter = 0
+
+                        if job:
                             # mark as running before processing to avoid multiple workers picking the same job
-                            db.execute(f"UPDATE {SqliteTableName.WHISPER_QUEUE.value} SET status = %s WHERE id = %s", (JobStatus.RUNNING.value, job['id']))
+                            db.execute(f"UPDATE {table} SET status = %s WHERE id = %s", (JobStatus.RUNNING.value, job['id']))
+                            print(f"Picked job id={job['id']} from {table} (isLargeJob={isLargeJob}, small_counter={self.small_counter})")
                             self.process_job(job)
                         else:
-                            time.sleep(0.1)  # no pending jobs, wait before polling again
+                            time.sleep(0.05)  # no pending jobs, wait before polling again
                 except Exception:
                     LOG.exception("Error polling for jobs")
                     time.sleep(5)
@@ -208,7 +246,7 @@ class WhisperWorker:
         # if job_type is transcribe -> mark completed
         if job_type == 'transcribe':
             with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
-                db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s WHERE id = %s", (JobStatus.COMPLETED.value, child_id))
+                db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (JobStatus.COMPLETED.value, child_id))
             LOG.info("Child %s marked completed (transcribe)", child_id)
             return
 

@@ -27,4 +27,5 @@ class SqliteTableName(str, Enum):
     JOBS = "jobs"
     CHILDREN_JOBS = "job_children"
     WHISPER_QUEUE = "whisper_queue"
+    WHISPER_LARGE_QUEUE = "whisper_large_queue"
     NLLB_QUEUE = "nllb_queue"

@@ -19,9 +19,7 @@ CREATE TRIGGER trg_users_updated_at
 BEFORE UPDATE ON users
 FOR EACH ROW
 BEGIN
-  UPDATE users
-  SET updated_at = CURRENT_TIMESTAMP
-  WHERE id = OLD.id;
+  SELECT NEW.updated_at = CURRENT_TIMESTAMP;
 END;
 
 INSERT INTO users (email, display_name, password_hash)
@@ -89,6 +87,24 @@ CREATE TABLE job_children (
 );
 
 CREATE TABLE whisper_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_child_id INTEGER NOT NULL REFERENCES job_children(id) ON DELETE CASCADE,
+  input_file_path TEXT NOT NULL,
+  offset INTEGER NOT NULL DEFAULT 0,
+  input_language TEXT NOT NULL,
+  output_language TEXT,
+  type TEXT NOT NULL CHECK(type IN ('transcribe','translate')),
+  output_type TEXT NOT NULL CHECK(output_type IN ('text','srt')),
+  transcribe_file_path TEXT,
+  translate_file_path TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK(status IN ('pending','running','completed','error')),
+
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE whisper_large_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_child_id INTEGER NOT NULL REFERENCES job_children(id) ON DELETE CASCADE,
   input_file_path TEXT NOT NULL,
@@ -176,20 +192,23 @@ BEGIN
   UPDATE jobs
   SET
     total_children = (SELECT COUNT(*) FROM job_children WHERE job_id = NEW.job_id),
-    completed_children = (SELECT COUNT(*) FROM job_children WHERE job_id = NEW.job_id AND status = 'completed')
+    completed_children = (SELECT COUNT(*) FROM job_children WHERE job_id = NEW.job_id AND status = 'completed'),
+    updated_at = CURRENT_TIMESTAMP
   WHERE id = NEW.job_id;
 
   -- handle errors for new parent
   UPDATE jobs
   SET
     status = 'error',
-    error_message = COALESCE((SELECT error_message FROM job_children WHERE job_id = NEW.job_id AND error_message IS NOT NULL ORDER BY updated_at DESC LIMIT 1), error_message)
+    error_message = COALESCE((SELECT error_message FROM job_children WHERE job_id = NEW.job_id AND error_message IS NOT NULL ORDER BY updated_at DESC LIMIT 1), error_message),
+    updated_at = CURRENT_TIMESTAMP
   WHERE id = NEW.job_id
     AND EXISTS (SELECT 1 FROM job_children WHERE job_id = NEW.job_id AND status = 'error');
 
   -- all children completed -> mark parent completed
   UPDATE jobs
-  SET status = 'completed'
+  SET status = 'completed',
+      updated_at = CURRENT_TIMESTAMP
   WHERE id = NEW.job_id
     AND (SELECT COUNT(*) FROM job_children WHERE job_id = NEW.job_id) > 0
     AND (SELECT COUNT(*) FROM job_children WHERE job_id = NEW.job_id AND status = 'completed') = (SELECT COUNT(*) FROM job_children WHERE job_id = NEW.job_id)
@@ -206,20 +225,23 @@ BEGIN
   UPDATE jobs
   SET
     total_children = (SELECT COUNT(*) FROM job_children WHERE job_id = OLD.job_id),
-    completed_children = (SELECT COUNT(*) FROM job_children WHERE job_id = OLD.job_id AND status = 'completed')
+    completed_children = (SELECT COUNT(*) FROM job_children WHERE job_id = OLD.job_id AND status = 'completed'),
+    updated_at = CURRENT_TIMESTAMP
   WHERE id = OLD.job_id
     AND (OLD.job_id IS NOT NULL AND OLD.job_id != NEW.job_id);
 
   UPDATE jobs
   SET
     status = 'error',
-    error_message = COALESCE((SELECT error_message FROM job_children WHERE job_id = OLD.job_id AND error_message IS NOT NULL ORDER BY updated_at DESC LIMIT 1), error_message)
+    error_message = COALESCE((SELECT error_message FROM job_children WHERE job_id = OLD.job_id AND error_message IS NOT NULL ORDER BY updated_at DESC LIMIT 1), error_message),
+    updated_at = CURRENT_TIMESTAMP
   WHERE id = OLD.job_id
     AND (OLD.job_id IS NOT NULL AND OLD.job_id != NEW.job_id)
     AND EXISTS (SELECT 1 FROM job_children WHERE job_id = OLD.job_id AND status = 'error');
 
   UPDATE jobs
-  SET status = 'completed'
+  SET status = 'completed',
+      updated_at = CURRENT_TIMESTAMP
   WHERE id = OLD.job_id
     AND (OLD.job_id IS NOT NULL AND OLD.job_id != NEW.job_id)
     AND (SELECT COUNT(*) FROM job_children WHERE job_id = OLD.job_id) > 0

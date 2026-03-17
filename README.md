@@ -48,7 +48,8 @@
  ## Cài đặt (development)
 
  1. Clone repository và vào thư mục project.
- 2. Tạo virtualenv và kích hoạt:
+ 2. Khởi tạo biến môi trường (copy `.env.example` → `.env` và chỉnh sửa).
+ 3. Tạo virtualenv và kích hoạt:
 
  ```bash
  python -m venv .venv
@@ -58,28 +59,23 @@
  .\.venv\Scripts\Activate.ps1
  ```
 
- 3. Cài dependencies:
+ 4. Cài dependencies:
 
  ```bash
- pip install -r api_service/requirements.txt
- pip install -r data_service/requirements.txt
- # Nếu chạy worker cục bộ:
- pip install -r worker/requirements.txt
+ pip install -r requirements.txt
  ```
 
  Ghi chú:
  - Nếu dùng GPU NVIDIA, cài PyTorch phù hợp với CUDA trước khi cài `transformers`/`accelerate` ví dụ: `pip install torch --index-url https://download.pytorch.org/whl/cu126`.
  - `ffmpeg` phải cài bằng package manager và có trên PATH.
 
- 4. Khởi động Postgres + Redis (chỉ khi USE_SQLITE=false):
+ 5. Khởi động Postgres + Redis (chỉ khi USE_SQLITE=false):
 
  ```bash
  ./data_service/scripts/start.sh
  ```
 
- Nếu `RUN_DB_INIT=true` script sẽ nạp `data_service/schema.sql` (LƯU Ý: sẽ DROP và recreate schema `sttt`).
-
- 5. Người dùng mặc định: schema có seed 1 user `admin@example.com` (hash placeholder). Bạn có thể thêm user trực tiếp vào DB.
+ 6. Người dùng mặc định: schema có seed 1 user `admin@example.com` (hash placeholder). Bạn có thể thêm user trực tiếp vào DB.
 
  ## Chạy dịch vụ
   - Worker (chạy nền):
@@ -94,7 +90,7 @@
  - API server (development):
 
  ```bash
- uvicorn api_service.main:app --host 0.0.0.0 --port 8125 --reload
+ uvicorn api_service.main:app --host 0.0.0.0 --port 8111 --reload
  ```
 
  Workers lắng nghe queue trên Redis (config trong `.env`).
