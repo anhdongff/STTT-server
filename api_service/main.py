@@ -3,16 +3,18 @@ import re
 from pathlib import Path
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, status, Depends, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, status, Depends, UploadFile, File, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
-from typing import Dict, List
+from typing import Dict, List, Annotated
 from contextlib import asynccontextmanager
 
 from api_service import schemas
+from api_service import verification
 from api_service import auth
+import bcrypt
 from api_service.enum import PostgresTableName, SqliteTableName, JobStatus
 from api_service.response_builder import ResponseBuilder
 from fastapi.exceptions import RequestValidationError
@@ -51,7 +53,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
     # Trả lỗi đơn giản cho client
     error_response = ResponseBuilder.error(
-        "Invalid request data",
+        "Dữ liệu gửi lên không hợp lệ",
         status_code=status.HTTP_400_BAD_REQUEST,
         action=ResponseBuilder.ACTION.TOAST
     )
@@ -73,8 +75,26 @@ async def internal_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=ResponseBuilder.error(
-            "Internal server error",
+            "Lỗi máy chủ nội bộ",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            action=ResponseBuilder.ACTION.TOAST
+        )
+    )
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+
+    # Log lỗi chi tiết ra console
+    logger.error("HTTP error: %s", exc.detail)
+    logger.error("Path: %s %s", request.method, request.url.path)
+    logger.error("Error: %s", str(exc))
+    logger.error(traceback.format_exc())
+
+    # Trả lỗi đơn giản cho client
+    return JSONResponse(
+        status_code=exc.status_code,
+        content= exc.detail if isinstance(exc.detail, dict) else ResponseBuilder.error(
+            exc.detail,
+            status_code=exc.status_code,
             action=ResponseBuilder.ACTION.TOAST
         )
     )
@@ -83,17 +103,22 @@ def get_current_user_middleware(credentials: HTTPAuthorizationCredentials = Depe
     token = credentials.credentials
     user = get_current_user_by_jwt_token(token)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Thông tin xác thực không hợp lệ")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail= ResponseBuilder.error("Token không hợp lệ hoặc đã hết hạn", status_code=status.HTTP_401_UNAUTHORIZED, action=ResponseBuilder.ACTION.LOGOUT))
+    if not user.get("verified", False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ResponseBuilder.error("Tài khoản chưa được xác thực", status_code=status.HTTP_403_FORBIDDEN, action=ResponseBuilder.ACTION.VERIFY))
     return user
 
 def get_current_user_by_jwt_token(token: str):
     try:
-        sub = auth.decode_access_token(token)
+        sub, iat = auth.decode_access_token(token)
         user_id = int(sub) if sub else None
         if user_id is None:
             return None
         user = auth.get_user_by_id(user_id)
         if not user:
+            return None
+        if user.get('last_reset_password_at') and iat and user['last_reset_password_at'] >= iat:
+            # token issued before last password reset
             return None
         return user
     except Exception as exc:
@@ -183,7 +208,7 @@ def login(req: schemas.LoginRequest):
     # check lock
     if auth.is_locked(email):
         content = ResponseBuilder.error(
-            "Account locked due to repeated failed attempts. Try later.", status_code=status.HTTP_423_LOCKED,
+            "Thông tin xác thực không hợp lệ", status_code=status.HTTP_423_LOCKED,
             action=ResponseBuilder.ACTION.TOAST
         )
         return JSONResponse(status_code=status.HTTP_423_LOCKED, content=content)
@@ -192,7 +217,7 @@ def login(req: schemas.LoginRequest):
     if not user:
         # register failed attempt to mitigate enumeration
         auth.register_failed_attempt(email)
-        content = ResponseBuilder.error("Invalid credentials", status_code=status.HTTP_401_UNAUTHORIZED, action=ResponseBuilder.ACTION.TOAST)
+        content = ResponseBuilder.error("Thông tin đăng nhập không hợp lệ", status_code=status.HTTP_401_UNAUTHORIZED, action=ResponseBuilder.ACTION.TOAST)
         return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content=content)
 
     # verify password
@@ -203,6 +228,11 @@ def login(req: schemas.LoginRequest):
         content = ResponseBuilder.build({"attempts_left": remaining}, status_code=status.HTTP_401_UNAUTHORIZED, message="Thông tin xác thực không hợp lệ", action=ResponseBuilder.ACTION.TOAST)
         return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content=content)
 
+    # check verified
+    if not user.get("verified", False):
+        content = ResponseBuilder.error("Tài khoản chưa được xác thực", status_code=status.HTTP_403_FORBIDDEN, action=ResponseBuilder.ACTION.VERIFY)
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content=content)
+
     # success
     auth.reset_failed_attempts(email)
     token = auth.create_access_token(subject=user["id"])
@@ -210,6 +240,10 @@ def login(req: schemas.LoginRequest):
     try:
         return_user = dict(user)
         return_user.pop("password_hash", None)
+        return_user.pop("verified", None)
+        return_user.pop("created_at", None)
+        return_user.pop("updated_at", None)
+        return_user.pop("last_reset_password_at", None)
     except Exception:
         # fallback if user is not a mapping
         return_user = user
@@ -267,7 +301,7 @@ async def upload_file(file: UploadFile = File(...), user=Depends(get_current_use
     content = ResponseBuilder.success({"path": rel_path}, action=ResponseBuilder.ACTION.TOAST)
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=content)
 
-def submit_job_and_split(output_type: str, job_type: str, input_language: str, output_language: str, file_path: str, user_id: int):
+def submit_job_and_split(output_type: str, job_type: str, input_language: str, output_language: str, file_path: str, user_id: int, metadata: dict = None):
     #  validate types
     if output_type not in ("text", "srt"):
         return -1, None, status.HTTP_400_BAD_REQUEST, CloseCode.INVALID_DATA, 'Loại đầu ra không hợp lệ'
@@ -343,7 +377,7 @@ def submit_job_and_split(output_type: str, job_type: str, input_language: str, o
             output_language,
             translate_file,
             trans_file,
-            '{}'
+            json.dumps(metadata) if metadata else None
         )
         row = db.fetchone(q, params)
         job_id = row['id']
@@ -400,6 +434,73 @@ def submit_job(req: schemas.SubmitJobRequest, user=Depends(get_current_user_midd
     content = ResponseBuilder.success({'job_id': job_id, 'total_children': total_children}, action=ResponseBuilder.ACTION.TOAST)
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=content)
 
+
+@app.post("/send-verify-code")
+def send_verify_code(req: schemas.SendVerifyCodeRequest):
+    # generate a 6-digit numeric code
+    import random
+    code = f"{random.randint(0, 999999):06d}"
+    sent_at = verification.send_verification_code(req.email.lower(), code, req.type)
+    if sent_at is None:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=ResponseBuilder.error("Không thể gửi mã xác thực (có thể vừa gửi trước đó hoặc lỗi cấu hình)", status_code=status.HTTP_400_BAD_REQUEST))
+    return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success({"sent_at": sent_at.isoformat()}))
+
+
+@app.post("/sign-in")
+def sign_in(req: schemas.SignInRequest):
+    email = req.email.lower()
+    pwd = req.password
+    try:
+        with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+            # check existing
+            existing = db.fetchone(f"SELECT id FROM {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} WHERE email = %s", (email,))
+            if existing:
+                return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=ResponseBuilder.error("Email đã tồn tại", status_code=status.HTTP_409_CONFLICT))
+            # hash password and insert
+            pwd_hash = bcrypt.hashpw(pwd.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            db.execute(f"INSERT INTO {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} (email, password_hash) VALUES (%s, %s)", (email, pwd_hash))
+    except Exception:
+        logger.exception("Error creating user %s", email)
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=ResponseBuilder.error("Lỗi máy chủ khi tạo tài khoản", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR))
+    return JSONResponse(status_code=status.HTTP_201_CREATED, content=ResponseBuilder.success({"email": email}, message="Tạo tài khoản thành công"))
+
+
+@app.post("/verify-new-account")
+def verify_new_account(req: schemas.VerifyNewAccountRequest):
+    email = req.email.lower()
+    code = req.code
+    ok = verification.verify_verification_code(email, code, 'email_verification')
+    if not ok:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=ResponseBuilder.error("Mã xác thực không hợp lệ hoặc đã hết hạn", status_code=status.HTTP_400_BAD_REQUEST))
+    try:
+        with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+            db.execute(f"UPDATE {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} SET verified = 1 WHERE email = %s", (email,))
+    except Exception:
+        logger.exception("Error verifying user %s", email)
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=ResponseBuilder.error("Lỗi máy chủ khi cập nhật tài khoản", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR))
+    return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success({"email": email}, message="Tài khoản đã được xác thực"))
+
+
+@app.post("/forget-password")
+def forget_password(req: schemas.ForgetPasswordRequest):
+    email = req.email.lower()
+    code = req.code
+    # verify code (type = password_reset)
+    ok = verification.verify_verification_code(email, code, 'password_reset')
+    if not ok:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=ResponseBuilder.error("Mã xác thực không hợp lệ hoặc đã hết hạn", status_code=status.HTTP_400_BAD_REQUEST))
+
+    try:
+        pwd_hash = bcrypt.hashpw(req.new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+            db.execute(f"UPDATE {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} SET password_hash = %s, last_reset_password_at = %s WHERE email = %s", (pwd_hash, now_str, email))
+    except Exception:
+        logger.exception("Error resetting password for %s", email)
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=ResponseBuilder.error("Lỗi máy chủ khi cập nhật mật khẩu", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR))
+
+    return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success({"email": email}, message="Mật khẩu đã được cập nhật"))
+
 @app.websocket("/submit_and_get_job")
 async def websocket_submit_and_get_job(ws: WebSocket):
     # authenticate token from query string
@@ -433,7 +534,9 @@ async def websocket_submit_and_get_job(ws: WebSocket):
                                         input_language=msg.get('input_language'),
                                         output_language=msg.get('output_language'),
                                         file_path=msg.get('file_path'),
-                                        user_id=user["id"])
+                                        user_id=user["id"],
+                                        metadata=json.dumps(msg.get('metadata')) if msg.get('metadata') else None
+                                    )
     if job_id == -1 or job_id is None:
         await ws.close(code=close_socket_code, reason=close_reason)
         return
@@ -588,3 +691,45 @@ def get_job(job_id: int, user=Depends(get_current_user_middleware)):
     out['translate_content'] = translate_content
 
     return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success(out))
+
+
+@app.get("/get-job")
+def list_jobs(start: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1)] = 20, count: bool = False, user=Depends(get_current_user_middleware)):
+    """List jobs for current user with pagination. If count=True include total in pagination meta."""
+    try:
+        with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
+            total = None
+            if count:
+                # count total and fetch page with limit/offset
+                cnt_row = db.fetchone(f"SELECT COUNT(*) as cnt FROM {PostgresTableName.JOBS.value if not USE_SQLITE else SqliteTableName.JOBS.value} WHERE user_id = %s", (user["id"],))
+                try:
+                    total = int(cnt_row.get("cnt") if cnt_row else 0)
+                except Exception:
+                    total = 0
+
+                q = f"SELECT * FROM {PostgresTableName.JOBS.value if not USE_SQLITE else SqliteTableName.JOBS.value} WHERE user_id = %s ORDER BY id DESC LIMIT %s OFFSET %s"
+                rows = db.fetchall(q, (user["id"], limit, start))
+            else:
+                # return full list for user (no limit/offset)
+                q = f"SELECT * FROM {PostgresTableName.JOBS.value if not USE_SQLITE else SqliteTableName.JOBS.value} WHERE user_id = %s ORDER BY id DESC"
+                rows = db.fetchall(q, (user["id"],))
+    except Exception:
+        logger.exception('DB error while listing jobs for user %s', user.get('id'))
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=ResponseBuilder.error("Lỗi máy chủ nội bộ", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR))
+
+    # serialize rows
+    out_list = []
+    for r in rows:
+        item = {}
+        for k, v in r.items():
+            if isinstance(v, datetime):
+                item[k] = v.isoformat()
+            else:
+                item[k] = v
+        out_list.append(item)
+
+    if count:
+        pagination = {"start": start, "limit": limit, "total": total}
+        return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.paginated(out_list, pagination))
+
+    return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success(out_list))

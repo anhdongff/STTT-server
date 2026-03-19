@@ -50,7 +50,8 @@ def decode_access_token(token: str) -> Optional[str]:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         sub = payload.get("sub")
-        return str(sub) if sub is not None else None
+        iat = payload.get("iat")
+        return str(sub) if sub is not None else None, datetime.fromtimestamp(iat) if iat else None
     except JWTError as exc:
         logging.debug("JWT decode error: %s", exc)
         return None
@@ -58,7 +59,7 @@ def decode_access_token(token: str) -> Optional[str]:
 
 def get_current_user_by_jwt_token(token: str):
     """Return user row (dict) for a valid JWT token, or None if token invalid or user not found."""
-    sub = decode_access_token(token)
+    sub, _ = decode_access_token(token)
     if not sub:
         return None
     try:
@@ -70,13 +71,13 @@ def get_current_user_by_jwt_token(token: str):
 
 def get_user_by_id(user_id: int):
     with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
-        row = db.fetchone(f"SELECT id, email, display_name, password_hash FROM {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} WHERE id = %s", (user_id,))
+        row = db.fetchone(f"SELECT * FROM {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} WHERE id = %s", (user_id,))
         return row
 
 
 def get_user_by_email(email: str):
     with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
-        row = db.fetchone(f"SELECT id, email, display_name, password_hash FROM {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} WHERE email = %s", (email,))
+        row = db.fetchone(f"SELECT * FROM {PostgresTableName.USERS.value if not USE_SQLITE else SqliteTableName.USERS.value} WHERE email = %s", (email,))
         return row
 
 

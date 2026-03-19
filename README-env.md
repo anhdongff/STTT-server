@@ -61,6 +61,13 @@ Dưới đây là ý nghĩa từng biến và gợi ý cấu hình:
 - SMALL_TASK_THRESHOLD_SECONDS
   - Mô tả: Ngưỡng thời gian (giây) để phân loại một tác vụ là "nhỏ". Tác vụ có thời gian ước tính dưới ngưỡng này sẽ được ưu tiên xử lý trên CPU, trong khi tác vụ lớn hơn sẽ được gửi đến GPU nếu có.
   - Mặc định `300` (5 phút).
+- SMALL_TASK_MAX_WORKERS
+  - Mô tả: Số lượng worker tối đa để xử lý các tác vụ nhỏ trên CPU. Cần điều chỉnh dựa trên số lõi CPU và tải hệ thống.
+  - Mặc định `4`.
+- EMAIL_USER
+  - Mô tả: Địa chỉ email dùng để gửi thông báo, email xác nhận, hoặc email đặt lại mật khẩu. Cần cấu hình nếu bạn muốn sử dụng tính năng email.
+- EMAIL_APP_PASS
+  - Mô tả: Mật khẩu ứng dụng (app password) cho `EMAIL_USER`. Nếu bạn dùng Gmail, cần tạo app password trong cài đặt bảo mật của tài khoản Google và sử dụng mật khẩu đó ở đây.
 
 Hướng dẫn nhanh
 

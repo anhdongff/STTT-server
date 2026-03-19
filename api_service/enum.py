@@ -28,7 +28,8 @@ class SqliteTableName(str, Enum):
     CHILDREN_JOBS = "job_children"
     WHISPER_QUEUE = "whisper_queue"
     WHISPER_LARGE_QUEUE = "whisper_large_queue"
-    NLLB_QUEUE = "nllb_queue"
+    NLLB_QUEUE = "nllb_queue",
+    VERIFICATION_CODES = "verification_codes"
 
 class VerificationCodeType(str, Enum):
     PASSWORD_RESET = "password_reset"

@@ -11,6 +11,7 @@ CREATE TABLE users (
   display_name TEXT,
   password_hash TEXT NOT NULL,
   last_reset_password_at DATETIME,
+  verified BOOLEAN NOT NULL DEFAULT 0,
 
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -23,8 +24,8 @@ BEGIN
   SELECT NEW.updated_at = CURRENT_TIMESTAMP;
 END;
 
-INSERT INTO users (email, display_name, password_hash, last_reset_password_at)
-VALUES ('admin@example.com','Admin','$2b$12$5y/F/S7SI.7bVIh4mjccXuAt6KIODgFRtZGqHM9OYhn7n2MrUI.ha', NULL);
+INSERT INTO users (email, display_name, password_hash, last_reset_password_at, verified)
+VALUES ('admin@example.com','Admin','$2b$12$5y/F/S7SI.7bVIh4mjccXuAt6KIODgFRtZGqHM9OYhn7n2MrUI.ha', NULL, 1);
 
 -- =========================
 -- jobs
@@ -129,8 +130,8 @@ CREATE TABLE whisper_large_queue (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_whisper_queue_job_child_id ON whisper_queue(job_child_id);
-CREATE INDEX idx_whisper_queue_status ON whisper_queue(status);
+CREATE INDEX idx_whisper_large_queue_job_child_id ON whisper_large_queue(job_child_id);
+CREATE INDEX idx_whisper_large_queue_status ON whisper_large_queue(status);
 
 CREATE TABLE nllb_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,6 +163,9 @@ CREATE TABLE verification_codes (
   used BOOLEAN NOT NULL DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_verification_codes_email ON verification_codes(email);
+CREATE INDEX idx_verification_codes_type ON verification_codes(type);
 
 -- =========================
 -- sync parent job triggers (mirror logic from Postgres schema)

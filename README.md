@@ -43,8 +43,6 @@
 
  Tạo file `.env` ở thư mục gốc repo với bằng cách copy `.env.example` và chỉnh sửa theo môi trường của bạn.
 
- Không commit secrets thực tế vào git.
-
  ## Cài đặt (development)
 
  1. Clone repository và vào thư mục project.
@@ -82,9 +80,13 @@
 
  ```bash
  # Whisper worker
- python -m worker.whisper_worker
+  python -m worker.whisper_worker # Window
+  python3 -m worker.whisper_worker # Linux/macOS
+
  # NLLB worker
- python -m worker.nllb_worker
+  python -m worker.nllb_worker # Window
+  python3 -m worker.nllb_worker # Linux/macOS
+
  ```
 
  - API server (development):
@@ -92,8 +94,6 @@
  ```bash
  uvicorn api_service.main:app --host 0.0.0.0 --port 8111 --reload
  ```
-
- Workers lắng nghe queue trên Redis (config trong `.env`).
 
  ## Cấu trúc DB & helper
 
@@ -131,17 +131,3 @@
  - Dùng TLS/HTTPS trong production.
  - Chạy workers dưới process manager (systemd, supervisor, container orchestrator).
  - Cân nhắc hạn chế đường dẫn file khi trả nội dung cho user (hiện code sử dụng đường dẫn lưu trong DB).
-
- ## Ví dụ chạy nhanh (local, dev)
-
- 1. Tạo và kích hoạt venv
- 2. Cài dependencies cho API
- 3. Chạy `./data_service/scripts/start.sh` để khởi Postgres + Redis
- 4. Chạy API server
- 5. Gọi `/login`, `/upload`, `/submit-job`, `/get-job` với header Authorization
-
- Nếu bạn muốn, tôi có thể bổ sung hướng dẫn cho Windows (PowerShell) hoặc thêm `docker-compose.override.yml` để chạy API + workers trong container — cho tôi biết lựa chọn của bạn.
-
- ---
-
- README (phiên bản tiếng Việt) được tạo theo yêu cầu. Nếu bạn muốn tôi mở rộng thêm phần cài đặt GPU (các lệnh cài `torch`+CUDA cụ thể) hoặc hướng dẫn Windows chi tiết, tôi sẽ bổ sung.

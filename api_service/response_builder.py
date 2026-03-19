@@ -9,6 +9,7 @@ class ResponseBuilder:
         TOAST = "toast"
         DIALOG = "dialog"
         LOGOUT = "logout"
+        VERIFY = "verify"
 
     @staticmethod
     def _status_message(code: int) -> str:
