@@ -80,7 +80,7 @@
  6. Người dùng mặc định: schema có seed 1 user `admin@example.com` (hash placeholder). Bạn có thể thêm user trực tiếp vào DB.
 
  ## Chạy dịch vụ
-  - Worker (chạy nền, mỗi worker một cửa sổ dòng lệnh riêng):
+  - Worker (chạy nền, mỗi worker một cửa sổ dòng lệnh riêng, đảm bảo đã kích hoạt virtualenv trên mỗi cửa sổ):
 
  ```bash
  # Whisper worker
@@ -94,7 +94,7 @@
 
  ```
 
- - API server (chạy trên cứ sổ dòng lêngj riêng):
+ - API server (chạy trên cứ sổ dòng lêngj riêng, đảm bảo đã kích hoạt virtualenv trên cửa sổ):
 
  ```bash
  uvicorn api_service.main:app --host 0.0.0.0 --port 8111 --reload
