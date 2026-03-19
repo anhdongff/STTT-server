@@ -50,11 +50,15 @@
  3. Tạo virtualenv và kích hoạt:
 
  ```bash
- python -m venv .venv
+ python -m venv .venv # Windows
+ python3 -m venv .venv # Linux/macOS
+ ```
+ ```bash
  # Linux / macOS
  source .venv/bin/activate
- # Windows PowerShell
- .\.venv\Scripts\Activate.ps1
+ # Windows
+ .\.venv\Scripts\Activate.ps1 # Terminal mặc định
+  source .venv/Scripts/activate # Git Bash
  ```
 
  4. Cài dependencies:
@@ -76,20 +80,21 @@
  6. Người dùng mặc định: schema có seed 1 user `admin@example.com` (hash placeholder). Bạn có thể thêm user trực tiếp vào DB.
 
  ## Chạy dịch vụ
-  - Worker (chạy nền):
+  - Worker (chạy nền, mỗi worker một cửa sổ dòng lệnh riêng):
 
  ```bash
  # Whisper worker
-  python -m worker.whisper_worker # Window
-  python3 -m worker.whisper_worker # Linux/macOS
-
+ python -m worker.whisper_worker # Window
+ python3 -m worker.whisper_worker # Linux/macOS
+ ```
+ ```bash
  # NLLB worker
-  python -m worker.nllb_worker # Window
-  python3 -m worker.nllb_worker # Linux/macOS
+ python -m worker.nllb_worker # Window
+ python3 -m worker.nllb_worker # Linux/macOS
 
  ```
 
- - API server (development):
+ - API server (chạy trên cứ sổ dòng lêngj riêng):
 
  ```bash
  uvicorn api_service.main:app --host 0.0.0.0 --port 8111 --reload
