@@ -10,6 +10,7 @@ CREATE TABLE users (
   email TEXT UNIQUE,
   display_name TEXT,
   password_hash TEXT NOT NULL,
+  last_reset_password_at DATETIME,
 
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -22,8 +23,8 @@ BEGIN
   SELECT NEW.updated_at = CURRENT_TIMESTAMP;
 END;
 
-INSERT INTO users (email, display_name, password_hash)
-VALUES ('admin@example.com','Admin','$2b$12$5y/F/S7SI.7bVIh4mjccXuAt6KIODgFRtZGqHM9OYhn7n2MrUI.ha');
+INSERT INTO users (email, display_name, password_hash, last_reset_password_at)
+VALUES ('admin@example.com','Admin','$2b$12$5y/F/S7SI.7bVIh4mjccXuAt6KIODgFRtZGqHM9OYhn7n2MrUI.ha', NULL);
 
 -- =========================
 -- jobs
@@ -86,6 +87,9 @@ CREATE TABLE job_children (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_job_children_job_id ON job_children(job_id);
+CREATE INDEX idx_job_children_status ON job_children(status);
+
 CREATE TABLE whisper_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_child_id INTEGER NOT NULL REFERENCES job_children(id) ON DELETE CASCADE,
@@ -103,6 +107,9 @@ CREATE TABLE whisper_queue (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_whisper_queue_job_child_id ON whisper_queue(job_child_id);
+CREATE INDEX idx_whisper_queue_status ON whisper_queue(status);
 
 CREATE TABLE whisper_large_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -122,6 +129,9 @@ CREATE TABLE whisper_large_queue (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_whisper_queue_job_child_id ON whisper_queue(job_child_id);
+CREATE INDEX idx_whisper_queue_status ON whisper_queue(status);
+
 CREATE TABLE nllb_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_child_id INTEGER NOT NULL REFERENCES job_children(id) ON DELETE CASCADE,
@@ -140,8 +150,18 @@ CREATE TABLE nllb_queue (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_job_children_job_id ON job_children(job_id);
-CREATE INDEX idx_job_children_status ON job_children(status);
+CREATE INDEX idx_nllb_queue_job_child_id ON nllb_queue(job_child_id);
+CREATE INDEX idx_nllb_queue_status ON nllb_queue(status);
+
+CREATE TABLE verification_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('password_reset', 'email_verification')),
+  expires_at DATETIME NOT NULL,
+  used BOOLEAN NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
 -- =========================
 -- sync parent job triggers (mirror logic from Postgres schema)

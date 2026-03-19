@@ -29,3 +29,7 @@ class SqliteTableName(str, Enum):
     WHISPER_QUEUE = "whisper_queue"
     WHISPER_LARGE_QUEUE = "whisper_large_queue"
     NLLB_QUEUE = "nllb_queue"
+
+class VerificationCodeType(str, Enum):
+    PASSWORD_RESET = "password_reset"
+    EMAIL_VERIFICATION = "email_verification"
