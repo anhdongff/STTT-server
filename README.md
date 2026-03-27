@@ -97,7 +97,7 @@
  - API server (chạy trên cứ sổ dòng lêngj riêng, đảm bảo đã kích hoạt virtualenv trên cửa sổ):
 
  ```bash
- uvicorn api_service.main:app --host 0.0.0.0 --port 8111 --reload
+ uvicorn api_service.main:app --host 0.0.0.0 --port 8111 --reload # Chỉ dùng --reload trong development
  ```
 
  ## Cấu trúc DB & helper
