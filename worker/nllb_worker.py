@@ -134,24 +134,39 @@ class NLLBWorker:
         outputs: List[str] = []
         for i in range(0, len(texts), batch_size):
             chunk = texts[i:i+batch_size]
-            # if tokenizer supports src_lang attribute (mbart-like), set it so tokenization is correct
-            self.tokenizer.src_lang = src
+            try:
+                # if tokenizer supports src_lang attribute (mbart-like), set it so tokenization is correct
+                if hasattr(self.tokenizer, 'src_lang'):
+                    try:
+                        self.tokenizer.src_lang = src
+                    except Exception:
+                        LOG.debug('Failed to set tokenizer.src_lang, continuing')
 
-            enc = self.tokenizer(chunk, return_tensors='pt', padding=True, truncation=True)
-            device = 'cuda' if (hasattr(torch, 'cuda') and torch.cuda.is_available()) else 'cpu'
-            enc = {k: v.to(device) for k, v in enc.items()}
+                enc = self.tokenizer(chunk, return_tensors='pt', padding=True, truncation=True)
+                device = 'cuda' if (hasattr(torch, 'cuda') and torch.cuda.is_available()) else 'cpu'
+                enc = {k: v.to(device) for k, v in enc.items()}
 
-            gen_kwargs = dict(num_beams=NLLB_NUM_BEAMS)
-                
-            # many seq2seq HF models accept forced_bos_token_id to force output language
-            gen_kwargs['forced_bos_token_id'] = self.tokenizer.convert_tokens_to_ids(tgt) if tgt else None
-            # also set decoder_start_token_id as an extra safety for some model variants
-            # gen_kwargs['decoder_start_token_id'] = int(forced_bos)
+                gen_kwargs = dict(num_beams=NLLB_NUM_BEAMS)
 
-            with torch.no_grad():
-                out = self.model.generate(**enc, **gen_kwargs)
-            decoded = self.tokenizer.batch_decode(out, skip_special_tokens=True)
-            outputs.extend(decoded)
+                # many seq2seq HF models accept forced_bos_token_id to force output language
+                try:
+                    if tgt:
+                        fb = self.tokenizer.convert_tokens_to_ids(tgt)
+                        gen_kwargs['forced_bos_token_id'] = fb
+                except Exception:
+                    LOG.debug('Failed to set forced_bos_token_id for tgt=%s', tgt)
+
+                # also set decoder_start_token_id as an extra safety for some model variants
+                # gen_kwargs['decoder_start_token_id'] = int(forced_bos)
+
+                with torch.no_grad():
+                    out = self.model.generate(**enc, **gen_kwargs)
+                decoded = self.tokenizer.batch_decode(out, skip_special_tokens=True)
+                outputs.extend(decoded)
+            except Exception as exc:
+                LOG.exception('Error during translation chunk starting at index %d: %s', i, exc)
+                # bubble up to caller to handle marking job as errored
+                raise
         return outputs
 
     def run(self):
@@ -231,7 +246,7 @@ class NLLBWorker:
             LOG.exception('Translation failed for child %s', child_id)
             try:
                 with (PostgresDB.from_env() if not USE_SQLITE else SqliteDB.from_env()) as db:
-                    db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s WHERE id = %s", (JobStatus.ERROR.value, child_id))
+                    db.execute(f"UPDATE {PostgresTableName.CHILDREN_JOBS.value if not USE_SQLITE else SqliteTableName.CHILDREN_JOBS.value} SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (JobStatus.ERROR.value, child_id))
             except Exception:
                 LOG.exception('Failed to mark job_children error for id=%s', child_id)
             return
