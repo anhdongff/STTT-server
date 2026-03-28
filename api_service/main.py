@@ -446,8 +446,8 @@ def send_verify_code(req: schemas.SendVerifyCodeRequest):
     return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success({"sent_at": sent_at.isoformat()}))
 
 
-@app.post("/sign-in")
-def sign_in(req: schemas.SignInRequest):
+@app.post("/sign-up")
+def sign_up(req: schemas.SignUpRequest):
     email = req.email.lower()
     pwd = req.password
     try:

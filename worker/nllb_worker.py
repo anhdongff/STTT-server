@@ -187,7 +187,7 @@ class NLLBWorker:
                         except Exception:
                             LOG.exception('Error processing nllb job %s', job.get('id'))
                     else:
-                        time.sleep(0.05)  # no pending jobs, wait before polling again
+                        time.sleep(0.35)  # no pending jobs, wait before polling again
 
     def process_job(self, job: dict):
         child_id = job.get('job_child_id')

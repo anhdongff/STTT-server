@@ -160,7 +160,7 @@ class WhisperWorker:
                             print(f"Picked job id={job['id']} from {table} (isLargeJob={isLargeJob}, small_counter={self.small_counter})")
                             self.process_job(job)
                         else:
-                            time.sleep(0.05)  # no pending jobs, wait before polling again
+                            time.sleep(0.35)  # no pending jobs, wait before polling again
                 except Exception:
                     LOG.exception("Error polling for jobs")
                     time.sleep(5)

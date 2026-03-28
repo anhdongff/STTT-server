@@ -94,11 +94,24 @@
 
  ```
 
- - API server (chạy trên cứ sổ dòng lêngj riêng, đảm bảo đã kích hoạt virtualenv trên cửa sổ):
+ - API server (chạy trên cứ sổ dòng lệnh riêng, đảm bảo đã kích hoạt virtualenv trên cửa sổ):
 
  ```bash
  uvicorn api_service.main:app --host 0.0.0.0 --port 8111 --reload # Chỉ dùng --reload trong development
  ```
+
+ ## Chạy dịch vụ bằng script (Linux/macOS - dùng tmux)
+  Bạn có thể dùng `start.sh` để khởi động tất cả services trong các pane tmux riêng biệt, và `stop.sh` để dừng chúng:
+  
+  ```bash
+  chmod +x start.sh
+  ./start.sh 
+  ```
+  ```bash 
+  chmod +x stop.sh
+  ./stop.sh
+  ```
+  - Quay lại phiên cũ đã tạo: `tmux attach -t sttt_server`
 
  ## Cấu trúc DB & helper
 
