@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
@@ -20,7 +20,7 @@ EMAIL_APP_PASS = os.getenv("EMAIL_APP_PASS")
 
 
 def _now() -> datetime:
-    return datetime.now()
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _parse_db_datetime(s: Optional[str]) -> Optional[datetime]:

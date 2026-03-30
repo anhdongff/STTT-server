@@ -44,6 +44,54 @@ security = HTTPBearer()
 logger = logging.getLogger(__name__)
 
 
+@app.middleware("http")
+async def catch_all_exceptions(request: Request, call_next):
+    """Catch exceptions that occur before/inside route handling (including body parsing)
+    and return the application's custom JSON error format instead of Starlette's default HTML/text.
+    """
+    try:
+        print(f"Incoming request: {request.method} {request.url.path}")
+        return await call_next(request)
+    except RequestValidationError as exc:
+        # validation errors (e.g., malformed body)
+        logger.error("Validation error (middleware): %s", exc.errors() if hasattr(exc, 'errors') else str(exc))
+        logger.error("Request body: %s", getattr(exc, 'body', None))
+        error_response = ResponseBuilder.error(
+            "Dữ liệu gửi lên không hợp lệ",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            action=ResponseBuilder.ACTION.TOAST
+        )
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=error_response)
+    except HTTPException as exc:
+        # reformat HTTPExceptions into our error format when possible
+        try:
+            detail = exc.detail
+        except Exception:
+            detail = str(exc)
+        logger.error("HTTP error (middleware): %s", detail)
+        return JSONResponse(
+            status_code=getattr(exc, 'status_code', status.HTTP_500_INTERNAL_SERVER_ERROR),
+            content= detail if isinstance(detail, dict) else ResponseBuilder.error(
+                detail,
+                status_code=getattr(exc, 'status_code', status.HTTP_500_INTERNAL_SERVER_ERROR),
+                action=ResponseBuilder.ACTION.TOAST
+            )
+        )
+    except Exception as exc:
+        logger.error("Unhandled exception (middleware)")
+        logger.error("Path: %s %s", request.method, request.url.path)
+        logger.error("Error: %s", str(exc))
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=ResponseBuilder.error(
+                "Lỗi máy chủ nội bộ",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                action=ResponseBuilder.ACTION.TOAST
+            )
+        )
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
 
