@@ -510,7 +510,7 @@ def sign_up(req: schemas.SignUpRequest):
     except Exception:
         logger.exception("Error creating user %s", email)
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=ResponseBuilder.error("Lỗi máy chủ khi tạo tài khoản", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR))
-    return JSONResponse(status_code=status.HTTP_201_CREATED, content=ResponseBuilder.success({"email": email}, message="Tạo tài khoản thành công"))
+    return JSONResponse(status_code=status.HTTP_201_CREATED, content=ResponseBuilder.success({"email": email}, message="Tạo tài khoản thành công, xác thực email để tiếp tục", action=ResponseBuilder.ACTION.VERIFY))
 
 
 @app.post("/verify-new-account")
@@ -526,7 +526,7 @@ def verify_new_account(req: schemas.VerifyNewAccountRequest):
     except Exception:
         logger.exception("Error verifying user %s", email)
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=ResponseBuilder.error("Lỗi máy chủ khi cập nhật tài khoản", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR))
-    return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success({"email": email}, message="Tài khoản đã được xác thực"))
+    return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success({"email": email}, message="Tài khoản đã được xác thực, yêu cầu đăng nhập lại để tiếp tục", action=ResponseBuilder.ACTION.VERIFY))
 
 
 @app.post("/forget-password")
