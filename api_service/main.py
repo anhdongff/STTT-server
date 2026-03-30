@@ -547,7 +547,7 @@ def forget_password(req: schemas.ForgetPasswordRequest):
         logger.exception("Error resetting password for %s", email)
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=ResponseBuilder.error("Lỗi máy chủ khi cập nhật mật khẩu", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR))
 
-    return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success({"email": email}, message="Mật khẩu đã được cập nhật"))
+    return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success({"email": email}, message="Mật khẩu đã được cập nhật, yêu cầu đăng nhập lại để tiếp tục", action=ResponseBuilder.ACTION.LOGIN))
 
 @app.websocket("/submit_and_get_job")
 async def websocket_submit_and_get_job(ws: WebSocket):
