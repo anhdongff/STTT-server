@@ -7,6 +7,7 @@ from fastapi import FastAPI, status, Depends, UploadFile, File, HTTPException, R
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi import WebSocket, WebSocketDisconnect
+from starlette.middleware.cors import CORSMiddleware
 import asyncio
 from typing import Dict, List, Annotated
 from contextlib import asynccontextmanager
@@ -28,6 +29,21 @@ from data_service.sqlite_db import SqliteDB
 from websockets.frames import CloseCode
 
 app = FastAPI(title="STTT API Service")
+
+# CORS configuration: set CORS_ORIGINS env var to a comma-separated list of origins, or '*' to allow all.
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+if CORS_ORIGINS == "*":
+    allow_origins = ["*"]
+else:
+    allow_origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allow_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 USE_SQLITE = os.getenv("USE_SQLITE", "false") == "true"
 SMALL_JOB_THRESHOLD_SECONDS = int(os.getenv("SMALL_JOB_THRESHOLD_SECONDS", "300"))
@@ -547,7 +563,7 @@ def forget_password(req: schemas.ForgetPasswordRequest):
         logger.exception("Error resetting password for %s", email)
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=ResponseBuilder.error("Lỗi máy chủ khi cập nhật mật khẩu", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR))
 
-    return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success({"email": email}, message="Mật khẩu đã được cập nhật, yêu cầu đăng nhập lại để tiếp tục", action=ResponseBuilder.ACTION.LOGIN))
+    return JSONResponse(status_code=status.HTTP_200_OK, content=ResponseBuilder.success({"email": email}, message="Mật khẩu đã được cập nhật, yêu cầu đăng nhập lại để tiếp tục", action=ResponseBuilder.ACTION.LOGOUT))
 
 @app.websocket("/submit_and_get_job")
 async def websocket_submit_and_get_job(ws: WebSocket):
@@ -566,9 +582,11 @@ async def websocket_submit_and_get_job(ws: WebSocket):
         return
 
     await ws.accept()
+    print(f"WebSocket connection accepted for user {user['id']} with token {token}")
 
     # wait for initial payload
     try:
+        print("Waiting for initial message with job parameters...")
         msg = await ws.receive_json()
     except WebSocketDisconnect:
         return
