@@ -490,7 +490,8 @@ def submit_job(req: schemas.SubmitJobRequest, user=Depends(get_current_user_midd
         input_language=req.input_language,
         output_language=req.output_language,
         file_path=req.file_path,
-        user_id=user["id"]
+        user_id=user["id"],
+        metadata=req.metadata if req.metadata else None
     )
     if job_id == -1:
         raise HTTPException(status_code=http_status_code, detail=reason)
@@ -601,7 +602,7 @@ async def websocket_submit_and_get_job(ws: WebSocket):
                                         output_language=msg.get('output_language'),
                                         file_path=msg.get('file_path'),
                                         user_id=user["id"],
-                                        metadata=json.dumps(msg.get('metadata')) if msg.get('metadata') else None
+                                        metadata=msg.get('metadata') if msg.get('metadata') else None
                                     )
     if job_id == -1 or job_id is None:
         await ws.close(code=close_socket_code, reason=close_reason)
