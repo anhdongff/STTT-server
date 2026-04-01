@@ -181,7 +181,7 @@ def get_current_user_by_jwt_token(token: str):
         user = auth.get_user_by_id(user_id)
         if not user:
             return None
-        if user.get('last_reset_password_at') and iat and user['last_reset_password_at'] >= iat:
+        if user.get('last_reset_password_at') and iat and datetime.strptime(user['last_reset_password_at'], "%Y-%m-%d %H:%M:%S") >= iat:
             # token issued before last password reset
             return None
         return user
