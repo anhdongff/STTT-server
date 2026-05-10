@@ -215,11 +215,17 @@ def _ffmpeg_split(path: Path, segment_seconds: int = 60) -> list:
     """
     out_dir = path.parent
     stem = path.stem
-    ext = path.suffix.lstrip('.')
+    ext = "wav"
     pattern = f"{stem}_%03d.{ext}"
     out_path = out_dir / pattern
     cmd = [
-        "ffmpeg", "-y", "-i", str(path), "-f", "segment", "-segment_time", str(segment_seconds), "-c", "copy", str(out_path)
+        "ffmpeg", "-y", "-i", str(path),
+        "-f", "segment", 
+        "-segment_time", str(segment_seconds),
+        "-acodec", "pcm_s16le",    # Chuyển sang PCM 16-bit Little Endian
+        "-ac", "1",               # Chuyển về Mono (1 kênh)
+        "-ar", "16000",           # Tần số lấy mẫu 16000Hz (thay đổi nếu cần)
+        str(out_path)
     ]
     try:
         subprocess.check_output(cmd, stderr=subprocess.STDOUT)
