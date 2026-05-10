@@ -16,3 +16,4 @@ sentencepiece>=0.1.99
 transformers>=4.30.0
 huggingface-hub>=0.18.0
 accelerate>=0.30.0
+bitsandbytes>=0.39.0
