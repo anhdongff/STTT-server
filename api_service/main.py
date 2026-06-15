@@ -37,6 +37,13 @@ if CORS_ORIGINS == "*":
 else:
     allow_origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()]
 
+allow_origins = [
+    "http://localhost",
+    "capacitor://localhost",
+    "http://192.168.0.100:5173",
+    "http://192.168.0.100:3000",
+    "http://localhost:3000"
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
